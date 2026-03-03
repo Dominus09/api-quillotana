@@ -5,31 +5,26 @@ const axios = require("axios");
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
-const headers = {
-  access_token: process.env.BSALE_TOKEN,
-};
+const headers = { access_token: process.env.BSALE_TOKEN };
+
+const OFFICE_ID = 1; // 👈 Cambiar si fuese necesario
 
 // ================================
-// CONFIGURACIÓN
-// ================================
-const OFFICE_ID = 1; // 👈 SUCURSAL QUE USAREMOS
-
-// ================================
-// FUNCIÓN PARA TRAER TODO PAGINADO
+// Traer todo paginado (50 en 50)
 // ================================
 async function getAll(endpoint) {
   let all = [];
   let offset = 0;
-  const limit = 100;
+  const limit = 50; // ✅ Paginación correcta
 
   while (true) {
-    const response = await axios.get(
+    const r = await axios.get(
       `https://api.bsale.io/v1/${endpoint}.json?limit=${limit}&offset=${offset}`,
       { headers }
     );
 
-    const items = response.data.items;
-    if (!items || items.length === 0) break;
+    const items = r.data?.items || [];
+    if (items.length === 0) break;
 
     all = all.concat(items);
     offset += limit;
@@ -39,21 +34,22 @@ async function getAll(endpoint) {
 }
 
 // ================================
-// CACHE EN MEMORIA
+// Cache
 // ================================
 let catalogoCache = [];
 let ultimaActualizacion = null;
 let generando = false;
+let resumenCache = null;
 
 // ================================
-// GENERAR CATÁLOGO
+// Generar catálogo POR BARCODE
 // ================================
 async function generarCatalogo() {
   if (generando) return;
 
   try {
     generando = true;
-    console.log("Generando catálogo en segundo plano...");
+    console.log("Generando catálogo (paginación 50)...");
 
     const [products, variants, types, stocks] = await Promise.all([
       getAll("products"),
@@ -62,71 +58,92 @@ async function generarCatalogo() {
       getAll("stocks"),
     ]);
 
-    // Mapear tipos
     const typesMap = {};
     types.forEach(t => {
       typesMap[t.id] = t.name;
     });
 
-    // Mapear productos
     const productsMap = {};
     products.forEach(p => {
       productsMap[p.id] = {
         id: p.id,
         name: p.name,
-        product_type_id: p.product_type?.id,
+        typeId: p.product_type?.id
+          ? Number(p.product_type.id)
+          : null,
       };
     });
 
-    // Mapear stock SOLO de la oficina definida
-    const stockMap = {};
+    const stockByVariant = {};
 
     stocks.forEach(s => {
-      if (Number(s.office.id) !== OFFICE_ID) return;
+      if (Number(s.office?.id) !== OFFICE_ID) return;
 
-      const variantId = Number(s.variant.id);
-      stockMap[variantId] =
-        (stockMap[variantId] || 0) + Number(s.quantityAvailable);
+      const variantId = Number(s.variant?.id);
+      if (!variantId) return;
+
+      if (!stockByVariant[variantId]) {
+        stockByVariant[variantId] = {
+          available: 0,
+          total: 0,
+          reserved: 0,
+        };
+      }
+
+      stockByVariant[variantId].available += Number(s.quantityAvailable || 0);
+      stockByVariant[variantId].total += Number(s.quantity || 0);
+      stockByVariant[variantId].reserved += Number(s.quantityReserved || 0);
     });
 
-    // Construir catálogo final
-    catalogoCache = variants
-      .map(v => {
-        const stock = stockMap[v.id] || 0;
-        if (stock <= 0) return null;
+    const catalogo = [];
 
-        const product = productsMap[Number(v.product.id)];
-        if (!product) return null;
+    variants.forEach(v => {
+      const variantId = Number(v.id);
+      const stock = stockByVariant[variantId];
 
-        return {
-          productId: product.id,
-          name: product.name,
-          variant: v.description || null, // 👈 detalle de presentación
-          barcode: v.barCode || v.code,
-          stock,
-          category: typesMap[product.product_type_id] || "Sin categoría",
-        };
-      })
-      .filter(Boolean);
+      const available = stock?.available || 0;
+      if (available <= 0) return;
 
+      const productId = Number(v.product?.id);
+      const p = productsMap[productId];
+      if (!p) return;
+
+      catalogo.push({
+        productId: p.id,
+        product: p.name,
+        variantId: variantId,
+        variant: v.description || null,
+        barcode: v.barCode || v.code || null,
+        type: p.typeId
+          ? typesMap[p.typeId] || "Sin categoría"
+          : "Sin categoría",
+        disponible: available,
+        total: stock?.total || 0,
+        reservado: stock?.reserved || 0,
+      });
+    });
+
+    catalogoCache = catalogo;
     ultimaActualizacion = new Date();
 
-    console.log(`Catálogo generado. Productos activos: ${catalogoCache.length}`);
-  } catch (error) {
-    console.error("Error generando catálogo:", error.message);
+    resumenCache = {
+      officeId: OFFICE_ID,
+      total_variantes_con_stock: catalogo.length,
+      ultimaActualizacion,
+    };
+
+    console.log(`Catálogo listo: ${catalogo.length} variantes con stock.`);
+  } catch (e) {
+    console.error("Error generando catálogo:", e.message);
   } finally {
     generando = false;
   }
 }
 
 // ================================
-// ENDPOINTS
+// Endpoints
 // ================================
 app.get("/", (req, res) => res.send("ok"));
-
-app.get("/test", (req, res) =>
-  res.json({ message: "API funcionando correctamente" })
-);
 
 app.get("/catalogo", (req, res) => {
   res.json({
@@ -137,15 +154,18 @@ app.get("/catalogo", (req, res) => {
   });
 });
 
+app.get("/resumen", (req, res) => {
+  res.json({
+    generando,
+    ...(resumenCache || {}),
+  });
+});
+
 // ================================
-// INICIAR SERVIDOR
+// Start
 // ================================
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`API corriendo en puerto ${PORT}`);
-
-  // Generar catálogo al iniciar
   generarCatalogo();
-
-  // Actualizar automáticamente cada 30 minutos
   setInterval(generarCatalogo, 30 * 60 * 1000);
 });
