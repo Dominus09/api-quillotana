@@ -1,171 +1,75 @@
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
+const path = require("path");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
-const headers = { access_token: process.env.BSALE_TOKEN };
+// 🔥 Servir imágenes desde /public
+app.use("/images", express.static(path.join(__dirname, "public")));
 
-const OFFICE_ID = 1; // 👈 Cambiar si fuese necesario
+// Test básico
+app.get("/", (req, res) => {
+  res.status(200).send("API Quillotana OK");
+});
 
-// ================================
-// Traer todo paginado (50 en 50)
-// ================================
-async function getAll(endpoint) {
-  let all = [];
-  let offset = 0;
-  const limit = 50; // ✅ Paginación correcta
+app.get("/test", (req, res) => {
+  res.json({ message: "API funcionando correctamente" });
+});
 
-  while (true) {
-    const r = await axios.get(
-      `https://api.bsale.io/v1/${endpoint}.json?limit=${limit}&offset=${offset}`,
-      { headers }
-    );
+// ===============================
+// 🔥 CONFIGURACIÓN BSALE
+// ===============================
+const BSALE_TOKEN = process.env.BSALE_TOKEN;
+const OFFICE_ID = 1; // 👈 solo esta sucursal
 
-    const items = r.data?.items || [];
-    if (items.length === 0) break;
+const headers = {
+  access_token: BSALE_TOKEN,
+};
 
-    all = all.concat(items);
-    offset += limit;
-  }
-
-  return all;
-}
-
-// ================================
-// Cache
-// ================================
-let catalogoCache = [];
-let ultimaActualizacion = null;
-let generando = false;
-let resumenCache = null;
-
-// ================================
-// Generar catálogo POR BARCODE
-// ================================
-async function generarCatalogo() {
-  if (generando) return;
-
+// ===============================
+// 🔥 ENDPOINT CATALOGO
+// ===============================
+app.get("/catalogo", async (req, res) => {
   try {
-    generando = true;
-    console.log("Generando catálogo (paginación 50)...");
+    let offset = 0;
+    const limit = 50;
+    let totalVariantes = 0;
 
-    const [products, variants, types, stocks] = await Promise.all([
-      getAll("products"),
-      getAll("variants"),
-      getAll("product_types"),
-      getAll("stocks"),
-    ]);
+    while (true) {
+      const stockResponse = await axios.get(
+        `https://api.bsale.io/v1/stocks.json?officeid=${OFFICE_ID}&limit=${limit}&offset=${offset}`,
+        { headers }
+      );
 
-    const typesMap = {};
-    types.forEach(t => {
-      typesMap[t.id] = t.name;
-    });
+      const stocks = stockResponse.data.items;
 
-    const productsMap = {};
-    products.forEach(p => {
-      productsMap[p.id] = {
-        id: p.id,
-        name: p.name,
-        typeId: p.product_type?.id
-          ? Number(p.product_type.id)
-          : null,
-      };
-    });
+      if (!stocks || stocks.length === 0) break;
 
-    const stockByVariant = {};
-
-    stocks.forEach(s => {
-      if (Number(s.office?.id) !== OFFICE_ID) return;
-
-      const variantId = Number(s.variant?.id);
-      if (!variantId) return;
-
-      if (!stockByVariant[variantId]) {
-        stockByVariant[variantId] = {
-          available: 0,
-          total: 0,
-          reserved: 0,
-        };
-      }
-
-      stockByVariant[variantId].available += Number(s.quantityAvailable || 0);
-      stockByVariant[variantId].total += Number(s.quantity || 0);
-      stockByVariant[variantId].reserved += Number(s.quantityReserved || 0);
-    });
-
-    const catalogo = [];
-
-    variants.forEach(v => {
-      const variantId = Number(v.id);
-      const stock = stockByVariant[variantId];
-
-      const available = stock?.available || 0;
-      if (available <= 0) return;
-
-      const productId = Number(v.product?.id);
-      const p = productsMap[productId];
-      if (!p) return;
-
-      catalogo.push({
-        productId: p.id,
-        product: p.name,
-        variantId: variantId,
-        variant: v.description || null,
-        barcode: v.barCode || v.code || null,
-        type: p.typeId
-          ? typesMap[p.typeId] || "Sin categoría"
-          : "Sin categoría",
-        disponible: available,
-        total: stock?.total || 0,
-        reservado: stock?.reserved || 0,
+      stocks.forEach((stock) => {
+        if (stock.quantityAvailable > 0) {
+          totalVariantes++;
+        }
       });
-    });
 
-    catalogoCache = catalogo;
-    ultimaActualizacion = new Date();
+      offset += limit;
+    }
 
-    resumenCache = {
+    res.json({
+      generando: false,
       officeId: OFFICE_ID,
-      total_variantes_con_stock: catalogo.length,
-      ultimaActualizacion,
-    };
-
-    console.log(`Catálogo listo: ${catalogo.length} variantes con stock.`);
-  } catch (e) {
-    console.error("Error generando catálogo:", e.message);
-  } finally {
-    generando = false;
+      total_variantes_con_stock: totalVariantes,
+      ultimaActualizacion: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ error: "Error generando catálogo" });
   }
-}
-
-// ================================
-// Endpoints
-// ================================
-app.get("/", (req, res) => res.send("ok"));
-
-app.get("/catalogo", (req, res) => {
-  res.json({
-    total: catalogoCache.length,
-    ultimaActualizacion,
-    generando,
-    productos: catalogoCache,
-  });
 });
 
-app.get("/resumen", (req, res) => {
-  res.json({
-    generando,
-    ...(resumenCache || {}),
-  });
-});
+// ===============================
 
-// ================================
-// Start
-// ================================
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`API corriendo en puerto ${PORT}`);
-  generarCatalogo();
-  setInterval(generarCatalogo, 30 * 60 * 1000);
 });
