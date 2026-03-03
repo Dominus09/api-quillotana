@@ -5,40 +5,95 @@ const axios = require("axios");
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
-app.get("/", (req, res) => res.status(200).send("ok"));
+const headers = {
+  access_token: process.env.BSALE_TOKEN,
+};
+
+async function getAll(endpoint) {
+  let all = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (true) {
+    const response = await axios.get(
+      `https://api.bsale.io/v1/${endpoint}.json?limit=${limit}&offset=${offset}`,
+      { headers }
+    );
+
+    const items = response.data.items;
+    if (!items || items.length === 0) break;
+
+    all = all.concat(items);
+    offset += limit;
+  }
+
+  return all;
+}
+
+app.get("/", (req, res) => res.send("ok"));
 app.get("/test", (req, res) => res.json({ message: "API funcionando" }));
 
-app.get("/debug-variant", async (req, res) => {
+app.get("/catalogo", async (req, res) => {
   try {
-    const response = await axios.get(
-      "https://api.bsale.io/v1/variants.json?limit=1&offset=0",
-      {
-        headers: {
-          access_token: process.env.BSALE_TOKEN,
-        },
-      }
-    );
+    const [products, variants, types, stocks] = await Promise.all([
+      getAll("products"),
+      getAll("variants"),
+      getAll("product_types"),
+      getAll("stocks"),
+    ]);
 
-    res.json(response.data.items[0]);
+    // Map product types
+    const typesMap = {};
+    types.forEach(t => {
+      typesMap[t.id] = t.name;
+    });
+
+    // Map products
+    const productsMap = {};
+    products.forEach(p => {
+      productsMap[p.id] = {
+        id: p.id,
+        name: p.name,
+        product_type_id: p.product_type?.id,
+      };
+    });
+
+    // Map stocks by variant
+    const stockMap = {};
+    stocks.forEach(s => {
+      const variantId = Number(s.variant.id);
+      stockMap[variantId] =
+        (stockMap[variantId] || 0) + Number(s.quantityAvailable);
+    });
+
+    // Build catalog
+    const resultado = variants
+      .map(v => {
+        const variantId = v.id;
+        const stock = stockMap[variantId] || 0;
+        if (stock <= 0) return null;
+
+        const product = productsMap[Number(v.product.id)];
+        if (!product) return null;
+
+        return {
+          id: product.id,
+          name: product.name,
+          barcode: v.barCode || v.code,
+          stock,
+          category: typesMap[product.product_type_id] || "Sin categoría",
+        };
+      })
+      .filter(Boolean);
+
+    res.json({
+      total: resultado.length,
+      productos: resultado,
+    });
+
   } catch (error) {
-    res.status(500).json({ error: "Error debug", detail: error.message });
-  }
-});
-
-app.get("/debug-stock", async (req, res) => {
-  try {
-    const response = await axios.get(
-      "https://api.bsale.io/v1/stocks.json?limit=1&offset=0",
-      {
-        headers: {
-          access_token: process.env.BSALE_TOKEN,
-        },
-      }
-    );
-
-    res.json(response.data.items[0]);
-  } catch (error) {
-    res.status(500).json({ error: "Error stock debug", detail: error.message });
+    console.error(error);
+    res.status(500).json({ error: "Error generando catálogo" });
   }
 });
 
