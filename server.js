@@ -9,6 +9,14 @@ const headers = {
   access_token: process.env.BSALE_TOKEN,
 };
 
+// ================================
+// CONFIGURACIÓN
+// ================================
+const OFFICE_ID = 1; // 👈 SUCURSAL QUE USAREMOS
+
+// ================================
+// FUNCIÓN PARA TRAER TODO PAGINADO
+// ================================
 async function getAll(endpoint) {
   let all = [];
   let offset = 0;
@@ -31,12 +39,15 @@ async function getAll(endpoint) {
 }
 
 // ================================
-// CACHE
+// CACHE EN MEMORIA
 // ================================
 let catalogoCache = [];
 let ultimaActualizacion = null;
 let generando = false;
 
+// ================================
+// GENERAR CATÁLOGO
+// ================================
 async function generarCatalogo() {
   if (generando) return;
 
@@ -51,11 +62,13 @@ async function generarCatalogo() {
       getAll("stocks"),
     ]);
 
+    // Mapear tipos
     const typesMap = {};
     types.forEach(t => {
       typesMap[t.id] = t.name;
     });
 
+    // Mapear productos
     const productsMap = {};
     products.forEach(p => {
       productsMap[p.id] = {
@@ -65,13 +78,18 @@ async function generarCatalogo() {
       };
     });
 
+    // Mapear stock SOLO de la oficina definida
     const stockMap = {};
+
     stocks.forEach(s => {
+      if (Number(s.office.id) !== OFFICE_ID) return;
+
       const variantId = Number(s.variant.id);
       stockMap[variantId] =
         (stockMap[variantId] || 0) + Number(s.quantityAvailable);
     });
 
+    // Construir catálogo final
     catalogoCache = variants
       .map(v => {
         const stock = stockMap[v.id] || 0;
@@ -81,8 +99,9 @@ async function generarCatalogo() {
         if (!product) return null;
 
         return {
-          id: product.id,
+          productId: product.id,
           name: product.name,
+          variant: v.description || null, // 👈 detalle de presentación
           barcode: v.barCode || v.code,
           stock,
           category: typesMap[product.product_type_id] || "Sin categoría",
@@ -91,8 +110,8 @@ async function generarCatalogo() {
       .filter(Boolean);
 
     ultimaActualizacion = new Date();
-    console.log(`Catálogo listo. Productos activos: ${catalogoCache.length}`);
 
+    console.log(`Catálogo generado. Productos activos: ${catalogoCache.length}`);
   } catch (error) {
     console.error("Error generando catálogo:", error.message);
   } finally {
@@ -124,9 +143,9 @@ app.get("/catalogo", (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`API corriendo en puerto ${PORT}`);
 
-  // Generar catálogo automáticamente al iniciar
+  // Generar catálogo al iniciar
   generarCatalogo();
 
-  // Actualizar cada 30 minutos automáticamente
+  // Actualizar automáticamente cada 30 minutos
   setInterval(generarCatalogo, 30 * 60 * 1000);
 });
