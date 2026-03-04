@@ -1,171 +1,278 @@
-require("dotenv").config();
-const express = require("express");
-const axios = require("axios");
+const express = require("express")
+const axios = require("axios")
+const cors = require("cors")
+const path = require("path")
+const fs = require("fs")
+const { exec } = require("child_process")
 
-const app = express();
-const PORT = Number(process.env.PORT || 3000);
+const app = express()
 
-const headers = { access_token: process.env.BSALE_TOKEN };
+app.use(cors())
+app.use(express.json())
 
-const OFFICE_ID = 1; // 👈 Cambiar si fuese necesario
+/* carpeta de imágenes */
+app.use("/images", express.static(path.join(__dirname, "public")))
 
-// ================================
-// Traer todo paginado (50 en 50)
-// ================================
-async function getAll(endpoint) {
-  let all = [];
-  let offset = 0;
-  const limit = 50; // ✅ Paginación correcta
+const BSALE_TOKEN = process.env.BSALE_TOKEN
+const OFFICE_ID = 1
+const CACHE_FILE = "/data/catalogo.json"
 
-  while (true) {
-    const r = await axios.get(
-      `https://api.bsale.io/v1/${endpoint}.json?limit=${limit}&offset=${offset}`,
-      { headers }
-    );
-
-    const items = r.data?.items || [];
-    if (items.length === 0) break;
-
-    all = all.concat(items);
-    offset += limit;
-  }
-
-  return all;
+let cacheCatalogo = {
+  generando: false,
+  ultimaActualizacion: null,
+  productos: []
 }
 
-// ================================
-// Cache
-// ================================
-let catalogoCache = [];
-let ultimaActualizacion = null;
-let generando = false;
-let resumenCache = null;
+/* ============================= */
+/* CARGAR CACHE SI EXISTE        */
+/* ============================= */
 
-// ================================
-// Generar catálogo POR BARCODE
-// ================================
+if (fs.existsSync(CACHE_FILE)) {
+
+  console.log("Cargando catálogo desde cache")
+
+  const data = fs.readFileSync(CACHE_FILE)
+
+  cacheCatalogo = JSON.parse(data)
+
+}
+
+/* ============================= */
+/* GENERAR CATALOGO              */
+/* ============================= */
+
 async function generarCatalogo() {
-  if (generando) return;
+
+  if (cacheCatalogo.generando) return
+
+  cacheCatalogo.generando = true
 
   try {
-    generando = true;
-    console.log("Generando catálogo (paginación 50)...");
 
-    const [products, variants, types, stocks] = await Promise.all([
-      getAll("products"),
-      getAll("variants"),
-      getAll("product_types"),
-      getAll("stocks"),
-    ]);
+    const limit = 50
 
-    const typesMap = {};
-    types.forEach(t => {
-      typesMap[t.id] = t.name;
-    });
+    let stocks = []
+    let offset = 0
 
-    const productsMap = {};
-    products.forEach(p => {
-      productsMap[p.id] = {
-        id: p.id,
-        name: p.name,
-        typeId: p.product_type?.id
-          ? Number(p.product_type.id)
-          : null,
-      };
-    });
+    while (true) {
 
-    const stockByVariant = {};
+      const res = await axios.get(
+        `https://api.bsale.io/v1/stocks.json?limit=${limit}&offset=${offset}`,
+        {
+          headers: { access_token: BSALE_TOKEN }
+        }
+      )
 
-    stocks.forEach(s => {
-      if (Number(s.office?.id) !== OFFICE_ID) return;
+      if (!res.data.items.length) break
 
-      const variantId = Number(s.variant?.id);
-      if (!variantId) return;
+      stocks = stocks.concat(res.data.items)
 
-      if (!stockByVariant[variantId]) {
-        stockByVariant[variantId] = {
-          available: 0,
-          total: 0,
-          reserved: 0,
-        };
+      offset += limit
+    }
+
+    console.log("Stocks cargados:", stocks.length)
+
+
+    offset = 0
+    let variants = []
+
+    while (true) {
+
+      const res = await axios.get(
+        `https://api.bsale.io/v1/variants.json?limit=${limit}&offset=${offset}`,
+        {
+          headers: { access_token: BSALE_TOKEN }
+        }
+      )
+
+      if (!res.data.items.length) break
+
+      variants = variants.concat(res.data.items)
+
+      offset += limit
+    }
+
+    console.log("Variantes cargadas:", variants.length)
+
+
+    offset = 0
+    let products = []
+
+    while (true) {
+
+      const res = await axios.get(
+        `https://api.bsale.io/v1/products.json?limit=${limit}&offset=${offset}`,
+        {
+          headers: { access_token: BSALE_TOKEN }
+        }
+      )
+
+      if (!res.data.items.length) break
+
+      products = products.concat(res.data.items)
+
+      offset += limit
+    }
+
+    console.log("Productos cargados:", products.length)
+
+
+    const mapVariants = {}
+    variants.forEach(v => mapVariants[v.id] = v)
+
+    const mapProducts = {}
+    products.forEach(p => mapProducts[p.id] = p)
+
+    const catalogo = []
+
+    stocks.forEach(stock => {
+
+      if (parseFloat(stock.quantityAvailable) <= 0) return
+      if (parseInt(stock.office.id) !== OFFICE_ID) return
+
+      const variant = mapVariants[stock.variant.id]
+      if (!variant) return
+
+      const product = mapProducts[variant.product.id]
+      if (!product) return
+
+      const barcode = variant.barCode || variant.code
+
+      let imagen = "https://api.quillotana.cl/images/placeholder2.webp"
+
+      if (barcode) {
+        imagen = `https://api.quillotana.cl/images/${barcode}.webp`
       }
 
-      stockByVariant[variantId].available += Number(s.quantityAvailable || 0);
-      stockByVariant[variantId].total += Number(s.quantity || 0);
-      stockByVariant[variantId].reserved += Number(s.quantityReserved || 0);
-    });
-
-    const catalogo = [];
-
-    variants.forEach(v => {
-      const variantId = Number(v.id);
-      const stock = stockByVariant[variantId];
-
-      const available = stock?.available || 0;
-      if (available <= 0) return;
-
-      const productId = Number(v.product?.id);
-      const p = productsMap[productId];
-      if (!p) return;
-
       catalogo.push({
-        productId: p.id,
-        product: p.name,
-        variantId: variantId,
-        variant: v.description || null,
-        barcode: v.barCode || v.code || null,
-        type: p.typeId
-          ? typesMap[p.typeId] || "Sin categoría"
-          : "Sin categoría",
-        disponible: available,
-        total: stock?.total || 0,
-        reservado: stock?.reserved || 0,
-      });
-    });
+  productId: product.id,
+  name: product.name,
+  variant: variant.description,
+  barcode: barcode,
+  stock: stock.quantityAvailable,
+  category: product.product_type?.name || "Otros",
+  image: imagen
+})
 
-    catalogoCache = catalogo;
-    ultimaActualizacion = new Date();
+    })
 
-    resumenCache = {
-      officeId: OFFICE_ID,
-      total_variantes_con_stock: catalogo.length,
-      ultimaActualizacion,
-    };
+    cacheCatalogo.productos = catalogo
+    cacheCatalogo.ultimaActualizacion = new Date().toISOString()
 
-    console.log(`Catálogo listo: ${catalogo.length} variantes con stock.`);
-  } catch (e) {
-    console.error("Error generando catálogo:", e.message);
-  } finally {
-    generando = false;
+    fs.writeFileSync(
+      CACHE_FILE,
+      JSON.stringify(cacheCatalogo, null, 2)
+    )
+
+    console.log("Catalogo generado:", catalogo.length)
+
+  } catch (err) {
+
+    console.log("Error catalogo:", err.message)
+
   }
+
+  cacheCatalogo.generando = false
 }
 
-// ================================
-// Endpoints
-// ================================
-app.get("/", (req, res) => res.send("ok"));
+/* ============================= */
+/* ENDPOINT CATALOGO             */
+/* ============================= */
 
-app.get("/catalogo", (req, res) => {
+app.get("/catalogo", async (req, res) => {
+
+  if (!cacheCatalogo.productos.length) {
+    await generarCatalogo()
+  }
+
   res.json({
-    total: catalogoCache.length,
-    ultimaActualizacion,
-    generando,
-    productos: catalogoCache,
-  });
-});
+    generando: cacheCatalogo.generando,
+    total: cacheCatalogo.productos.length,
+    ultimaActualizacion: cacheCatalogo.ultimaActualizacion,
+    productos: cacheCatalogo.productos
+  })
 
-app.get("/resumen", (req, res) => {
+})
+
+/* ============================= */
+/* STATUS                        */
+/* ============================= */
+
+app.get("/status", (req, res) => {
+
   res.json({
-    generando,
-    ...(resumenCache || {}),
-  });
-});
+    generando: cacheCatalogo.generando,
+    total: cacheCatalogo.productos.length,
+    ultimaActualizacion: cacheCatalogo.ultimaActualizacion
+  })
 
-// ================================
-// Start
-// ================================
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`API corriendo en puerto ${PORT}`);
-  generarCatalogo();
-  setInterval(generarCatalogo, 30 * 60 * 1000);
-});
+})
+
+/* ============================= */
+/* ACTUALIZAR IMAGENES GITHUB    */
+/* ============================= */
+
+app.get("/update-images", (req, res) => {
+
+  if (req.query.key !== "Quillotana123") {
+    return res.status(403).send("No autorizado")
+  }
+
+  exec("git pull", { cwd: "/app" }, (error, stdout, stderr) => {
+
+    if (error) {
+
+      console.log("Error actualizando imágenes:", error)
+
+      return res.status(500).json({
+        ok: false,
+        error: error.message
+      })
+    }
+
+    console.log("Imágenes actualizadas desde GitHub")
+
+    res.json({
+      ok: true,
+      output: stdout
+    })
+
+  })
+
+})
+
+/* ============================= */
+/* SERVER                        */
+/* ============================= */
+
+const PORT = process.env.PORT || 3000
+
+app.listen(PORT, async () => {
+
+  console.log("Servidor iniciado en puerto", PORT)
+
+  if (!cacheCatalogo.productos.length) {
+
+    console.log("Generando catalogo inicial...")
+
+    await generarCatalogo()
+
+  } else {
+
+    console.log("Catalogo cargado desde cache")
+
+  }
+
+})
+
+/* ============================= */
+/* ACTUALIZAR CATALOGO AUTOMATICO */
+/* ============================= */
+
+setInterval(async () => {
+
+  console.log("Actualizando catálogo automático...")
+
+  await generarCatalogo()
+
+}, 30 * 60 * 1000)
