@@ -217,7 +217,11 @@ app.get("/update-catalogo", async (req, res) => {
     return res.status(403).send("No autorizado")
   }
 
-  console.log("Actualización manual del catálogo")
+  console.log("Forzando regeneración completa del catálogo")
+
+  cacheCatalogo.generando = false
+  cacheCatalogo.productos = []
+  cacheCatalogo.ultimaActualizacion = null
 
   await generarCatalogo()
 
