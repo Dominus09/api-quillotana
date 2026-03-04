@@ -186,6 +186,12 @@ app.get("/status", (req, res) => {
 
 const PORT = process.env.PORT || 3000
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+
   console.log("Servidor iniciado en puerto", PORT)
+
+  console.log("Generando catalogo inicial...")
+
+  await generarCatalogo()
+
 })
