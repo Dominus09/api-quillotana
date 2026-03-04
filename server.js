@@ -123,7 +123,7 @@ async function generarCatalogo() {
 
       /* IMAGEN CON PLACEHOLDER AUTOMATICO */
 
-      let imagen = "https://api.quillotana.cl/images/placeholder.webp"
+      let imagen = "https://api.quillotana.cl/images/placeholder2.webp"
 
       if (barcode) {
         imagen = `https://api.quillotana.cl/images/${barcode}.webp`
