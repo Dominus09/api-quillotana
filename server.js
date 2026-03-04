@@ -115,7 +115,19 @@ async function generarCatalogo() {
     }
 
     console.log("Productos cargados:", products.length)
+let productTypes = []
 
+const resTypes = await axios.get(
+  `https://api.bsale.io/v1/product_types.json`,
+  {
+    headers: { access_token: BSALE_TOKEN }
+  }
+)
+
+productTypes = resTypes.data.items
+
+const mapTypes = {}
+productTypes.forEach(t => mapTypes[t.id] = t.name)
 
     const mapVariants = {}
     variants.forEach(v => mapVariants[v.id] = v)
@@ -150,7 +162,7 @@ async function generarCatalogo() {
   variant: variant.description,
   barcode: barcode,
   stock: stock.quantityAvailable,
-  category: product.product_type?.name || "Otros",
+  category: mapTypes[product.product_type] || "Otros",
   image: imagen
 })
 
