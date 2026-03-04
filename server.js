@@ -27,8 +27,6 @@ let cacheCatalogo = {
 
 async function generarCatalogo() {
 
-  async function generarCatalogo() {
-
 if (cacheCatalogo.generando) return;
 
 cacheCatalogo.generando = true;
