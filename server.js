@@ -15,7 +15,6 @@ app.use("/images", express.static(path.join(__dirname, "public")))
 
 const BSALE_TOKEN = process.env.BSALE_TOKEN
 const OFFICE_ID = 1
-
 const CACHE_FILE = "/app/catalogo.json"
 
 let cacheCatalogo = {
@@ -160,8 +159,6 @@ async function generarCatalogo() {
     cacheCatalogo.productos = catalogo
     cacheCatalogo.ultimaActualizacion = new Date().toISOString()
 
-    /* guardar cache */
-
     fs.writeFileSync(
       CACHE_FILE,
       JSON.stringify(cacheCatalogo, null, 2)
@@ -212,19 +209,28 @@ app.get("/status", (req, res) => {
 })
 
 /* ============================= */
-/* ACTUALIZAR IMAGENES           */
+/* ACTUALIZAR IMAGENES GITHUB    */
 /* ============================= */
 
 app.get("/update-images", (req, res) => {
 
+  if (req.query.key !== "Quillotana123") {
+    return res.status(403).send("No autorizado")
+  }
+
   exec("git pull", { cwd: "/app" }, (error, stdout, stderr) => {
 
     if (error) {
+
+      console.log("Error actualizando imágenes:", error)
+
       return res.status(500).json({
         ok: false,
         error: error.message
       })
     }
+
+    console.log("Imágenes actualizadas desde GitHub")
 
     res.json({
       ok: true,
@@ -258,3 +264,15 @@ app.listen(PORT, async () => {
   }
 
 })
+
+/* ============================= */
+/* ACTUALIZAR CATALOGO AUTOMATICO */
+/* ============================= */
+
+setInterval(async () => {
+
+  console.log("Actualizando catálogo automático...")
+
+  await generarCatalogo()
+
+}, 30 * 60 * 1000)
