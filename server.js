@@ -1,121 +1,175 @@
-require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
+const cors = require("cors");
+const fs = require("fs");
 const path = require("path");
-const cors = require('cors')
 
 const app = express();
-app.use(cors())
-const PORT = Number(process.env.PORT || 3000);
 
-// =============================
-// 🔥 SERVIR IMÁGENES
-// =============================
+app.use(cors());
+app.use(express.json());
+
+/* carpeta de imágenes */
 app.use("/images", express.static(path.join(__dirname, "public")));
 
-app.get("/", (req, res) => {
-  res.send("API Quillotana OK");
-});
-
-app.get("/test", (req, res) => {
-  res.json({ status: "API funcionando" });
-});
-
-// =============================
-// 🔥 CONFIG BSALE
-// =============================
 const BSALE_TOKEN = process.env.BSALE_TOKEN;
 const OFFICE_ID = 1;
 
-const headers = {
-  access_token: BSALE_TOKEN,
+let cacheCatalogo = {
+    generando: false,
+    ultimaActualizacion: null,
+    productos: []
 };
 
-// =============================
-// 🔥 ENDPOINT CATALOGO
-// =============================
+/* ============================= */
+/* GENERAR CATALOGO              */
+/* ============================= */
+
+async function generarCatalogo() {
+
+    if (cacheCatalogo.generando) return;
+
+    cacheCatalogo.generando = true;
+
+    try {
+
+        let offset = 0;
+        const limit = 50;
+
+        let variantes = [];
+
+        while (true) {
+
+            const res = await axios.get(
+                `https://api.bsale.io/v1/stocks.json?limit=${limit}&offset=${offset}`,
+                {
+                    headers: {
+                        "access_token": BSALE_TOKEN
+                    }
+                }
+            );
+
+            const items = res.data.items;
+
+            if (!items.length) break;
+
+            variantes = variantes.concat(items);
+
+            offset += limit;
+        }
+
+        const productos = [];
+
+        for (const stock of variantes) {
+
+            if (parseFloat(stock.quantityAvailable) <= 0) continue;
+            if (parseInt(stock.office.id) !== OFFICE_ID) continue;
+
+            const variantId = stock.variant.id;
+
+            const variantRes = await axios.get(
+                `https://api.bsale.io/v1/variants/${variantId}.json`,
+                {
+                    headers: {
+                        "access_token": BSALE_TOKEN
+                    }
+                }
+            );
+
+            const variant = variantRes.data;
+
+            const productRes = await axios.get(
+                `https://api.bsale.io/v1/products/${variant.product.id}.json`,
+                {
+                    headers: {
+                        "access_token": BSALE_TOKEN
+                    }
+                }
+            );
+
+            const product = productRes.data;
+
+            let tipo = "";
+
+            if (product.product_type) {
+                const typeRes = await axios.get(
+                    `https://api.bsale.io/v1/product_types/${product.product_type.id}.json`,
+                    {
+                        headers: {
+                            "access_token": BSALE_TOKEN
+                        }
+                    }
+                );
+
+                tipo = typeRes.data.name;
+            }
+
+            const barcode = variant.barCode || variant.code;
+
+            productos.push({
+                productId: product.id,
+                name: product.name,
+                variant: variant.description,
+                barcode: barcode,
+                stock: stock.quantityAvailable,
+                category: tipo,
+                image: `https://api.quillotana.cl/images/${barcode}.webp`
+            });
+        }
+
+        cacheCatalogo.productos = productos;
+        cacheCatalogo.ultimaActualizacion = new Date().toISOString();
+
+        console.log("Catalogo generado:", productos.length);
+
+    } catch (error) {
+
+        console.error("Error generando catalogo", error.message);
+
+    }
+
+    cacheCatalogo.generando = false;
+}
+
+/* ============================= */
+/* ENDPOINT CATALOGO             */
+/* ============================= */
+
 app.get("/catalogo", async (req, res) => {
-  try {
-    let offset = 0;
-    const limit = 50;
 
-    const productos = [];
-    const variantesProcesadas = new Set();
-
-    while (true) {
-      const stockResponse = await axios.get(
-        `https://api.bsale.io/v1/stocks.json?officeid=${OFFICE_ID}&limit=${limit}&offset=${offset}`,
-        { headers }
-      );
-
-      const stocks = stockResponse.data.items;
-      if (!stocks || stocks.length === 0) break;
-
-      for (const stock of stocks) {
-        if (stock.quantityAvailable <= 0) continue;
-
-        const variantId = stock.variant.id;
-
-        if (variantesProcesadas.has(variantId)) continue;
-        variantesProcesadas.add(variantId);
-
-        // 🔹 VARIANTE
-        const variantResponse = await axios.get(
-          `https://api.bsale.io/v1/variants/${variantId}.json`,
-          { headers }
-        );
-
-        const variant = variantResponse.data;
-
-        // 🔹 PRODUCTO
-        const productResponse = await axios.get(
-          `https://api.bsale.io/v1/products/${variant.product.id}.json`,
-          { headers }
-        );
-
-        const product = productResponse.data;
-
-        // 🔹 TIPO PRODUCTO
-        const productTypeResponse = await axios.get(
-          `https://api.bsale.io/v1/product_types/${product.product_type.id}.json`,
-          { headers }
-        );
-
-        const productType = productTypeResponse.data;
-
-        const barcode = variant.barCode || variant.code || null;
-
-        productos.push({
-          productId: product.id,
-          name: product.name,
-          variant: variant.description || null,
-          barcode: barcode,
-          stock: stock.quantityAvailable,
-          category: productType.name,
-          image: barcode
-            ? `https://api.quillotana.cl/images/${barcode}.webp`
-            : null,
-        });
-      }
-
-      offset += limit;
+    if (!cacheCatalogo.productos.length) {
+        await generarCatalogo();
     }
 
     res.json({
-      total: productos.length,
-      officeId: OFFICE_ID,
-      ultimaActualizacion: new Date().toISOString(),
-      productos,
+        generando: cacheCatalogo.generando,
+        total: cacheCatalogo.productos.length,
+        ultimaActualizacion: cacheCatalogo.ultimaActualizacion,
+        productos: cacheCatalogo.productos
     });
 
-  } catch (error) {
-    console.error(error.message);
-    res.status(500).json({ error: "Error generando catálogo" });
-  }
 });
 
-// =============================
+/* ============================= */
+/* ENDPOINT STATUS               */
+/* ============================= */
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`API corriendo en puerto ${PORT}`);
+app.get("/status", (req, res) => {
+
+    res.json({
+        generando: cacheCatalogo.generando,
+        total: cacheCatalogo.productos.length,
+        ultimaActualizacion: cacheCatalogo.ultimaActualizacion
+    });
+
+});
+
+/* ============================= */
+/* SERVER                        */
+/* ============================= */
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+    console.log("Servidor iniciado en puerto", PORT);
 });
