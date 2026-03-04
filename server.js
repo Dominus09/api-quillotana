@@ -145,14 +145,14 @@ async function generarCatalogo() {
       }
 
       catalogo.push({
-        productId: product.id,
-        name: product.name,
-        variant: variant.description,
-        barcode: barcode,
-        stock: stock.quantityAvailable,
-        category: "",
-        image: imagen
-      })
+  productId: product.id,
+  name: product.name,
+  variant: variant.description,
+  barcode: barcode,
+  stock: stock.quantityAvailable,
+  category: product.product_type?.name || "Otros",
+  image: imagen
+})
 
     })
 
