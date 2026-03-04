@@ -27,108 +27,145 @@ let cacheCatalogo = {
 
 async function generarCatalogo() {
 
-    if (cacheCatalogo.generando) return;
+  async function generarCatalogo() {
 
-    cacheCatalogo.generando = true;
+if (cacheCatalogo.generando) return;
 
-    try {
+cacheCatalogo.generando = true;
 
-        let offset = 0;
-        const limit = 50;
+try {
 
-        let variantes = [];
+let offset = 0;
+const limit = 50;
 
-        while (true) {
+let stocks = [];
 
-            const res = await axios.get(
-                `https://api.bsale.io/v1/stocks.json?limit=${limit}&offset=${offset}`,
-                {
-                    headers: {
-                        "access_token": BSALE_TOKEN
-                    }
-                }
-            );
+while(true){
 
-            const items = res.data.items;
+const res = await axios.get(
+`https://api.bsale.io/v1/stocks.json?limit=${limit}&offset=${offset}`,
+{
+headers:{
+"access_token":BSALE_TOKEN
+}
+}
+)
 
-            if (!items.length) break;
+if(!res.data.items.length) break;
 
-            variantes = variantes.concat(items);
+stocks = stocks.concat(res.data.items);
 
-            offset += limit;
-        }
+offset += limit;
 
-        const productos = [];
+}
 
-        for (const stock of variantes) {
+console.log("Stocks cargados:",stocks.length)
 
-            if (parseFloat(stock.quantityAvailable) <= 0) continue;
-            if (parseInt(stock.office.id) !== OFFICE_ID) continue;
 
-            const variantId = stock.variant.id;
 
-            const variantRes = await axios.get(
-                `https://api.bsale.io/v1/variants/${variantId}.json`,
-                {
-                    headers: {
-                        "access_token": BSALE_TOKEN
-                    }
-                }
-            );
+offset = 0
+let variants=[]
 
-            const variant = variantRes.data;
+while(true){
 
-            const productRes = await axios.get(
-                `https://api.bsale.io/v1/products/${variant.product.id}.json`,
-                {
-                    headers: {
-                        "access_token": BSALE_TOKEN
-                    }
-                }
-            );
+const res = await axios.get(
+`https://api.bsale.io/v1/variants.json?limit=${limit}&offset=${offset}`,
+{
+headers:{
+"access_token":BSALE_TOKEN
+}
+}
+)
 
-            const product = productRes.data;
+if(!res.data.items.length) break;
 
-            let tipo = "";
+variants = variants.concat(res.data.items);
 
-            if (product.product_type) {
-                const typeRes = await axios.get(
-                    `https://api.bsale.io/v1/product_types/${product.product_type.id}.json`,
-                    {
-                        headers: {
-                            "access_token": BSALE_TOKEN
-                        }
-                    }
-                );
+offset+=limit
 
-                tipo = typeRes.data.name;
-            }
+}
 
-            const barcode = variant.barCode || variant.code;
+console.log("Variantes cargadas:",variants.length)
 
-            productos.push({
-                productId: product.id,
-                name: product.name,
-                variant: variant.description,
-                barcode: barcode,
-                stock: stock.quantityAvailable,
-                category: tipo,
-                image: `https://api.quillotana.cl/images/${barcode}.webp`
-            });
-        }
 
-        cacheCatalogo.productos = productos;
-        cacheCatalogo.ultimaActualizacion = new Date().toISOString();
 
-        console.log("Catalogo generado:", productos.length);
+offset=0
+let products=[]
 
-    } catch (error) {
+while(true){
 
-        console.error("Error generando catalogo", error.message);
+const res = await axios.get(
+`https://api.bsale.io/v1/products.json?limit=${limit}&offset=${offset}`,
+{
+headers:{
+"access_token":BSALE_TOKEN
+}
+}
+)
 
-    }
+if(!res.data.items.length) break;
 
-    cacheCatalogo.generando = false;
+products = products.concat(res.data.items);
+
+offset+=limit
+
+}
+
+console.log("Productos cargados:",products.length)
+
+
+
+const mapVariants={}
+variants.forEach(v=>mapVariants[v.id]=v)
+
+const mapProducts={}
+products.forEach(p=>mapProducts[p.id]=p)
+
+
+
+const catalogo=[]
+
+stocks.forEach(stock=>{
+
+if(parseFloat(stock.quantityAvailable)<=0) return
+if(parseInt(stock.office.id)!==OFFICE_ID) return
+
+const variant = mapVariants[stock.variant.id]
+
+if(!variant) return
+
+const product = mapProducts[variant.product.id]
+
+if(!product) return
+
+const barcode = variant.barCode || variant.code
+
+catalogo.push({
+productId:product.id,
+name:product.name,
+variant:variant.description,
+barcode:barcode,
+stock:stock.quantityAvailable,
+category:product.product_type?.name || "",
+image:`https://api.quillotana.cl/images/${barcode}.webp`
+})
+
+})
+
+
+cacheCatalogo.productos=catalogo
+cacheCatalogo.ultimaActualizacion=new Date().toISOString()
+
+console.log("Catalogo generado:",catalogo.length)
+
+}catch(err){
+
+console.log("Error catalogo:",err.message)
+
+}
+
+cacheCatalogo.generando=false
+
 }
 
 /* ============================= */
