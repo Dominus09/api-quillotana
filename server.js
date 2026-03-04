@@ -2,6 +2,8 @@ const express = require("express")
 const axios = require("axios")
 const cors = require("cors")
 const path = require("path")
+const fs = require("fs")
+const { exec } = require("child_process")
 
 const app = express()
 
@@ -14,10 +16,26 @@ app.use("/images", express.static(path.join(__dirname, "public")))
 const BSALE_TOKEN = process.env.BSALE_TOKEN
 const OFFICE_ID = 1
 
+const CACHE_FILE = "/app/catalogo.json"
+
 let cacheCatalogo = {
   generando: false,
   ultimaActualizacion: null,
   productos: []
+}
+
+/* ============================= */
+/* CARGAR CACHE SI EXISTE        */
+/* ============================= */
+
+if (fs.existsSync(CACHE_FILE)) {
+
+  console.log("Cargando catálogo desde cache")
+
+  const data = fs.readFileSync(CACHE_FILE)
+
+  cacheCatalogo = JSON.parse(data)
+
 }
 
 /* ============================= */
@@ -121,8 +139,6 @@ async function generarCatalogo() {
 
       const barcode = variant.barCode || variant.code
 
-      /* IMAGEN CON PLACEHOLDER AUTOMATICO */
-
       let imagen = "https://api.quillotana.cl/images/placeholder2.webp"
 
       if (barcode) {
@@ -143,6 +159,13 @@ async function generarCatalogo() {
 
     cacheCatalogo.productos = catalogo
     cacheCatalogo.ultimaActualizacion = new Date().toISOString()
+
+    /* guardar cache */
+
+    fs.writeFileSync(
+      CACHE_FILE,
+      JSON.stringify(cacheCatalogo, null, 2)
+    )
 
     console.log("Catalogo generado:", catalogo.length)
 
@@ -189,6 +212,30 @@ app.get("/status", (req, res) => {
 })
 
 /* ============================= */
+/* ACTUALIZAR IMAGENES           */
+/* ============================= */
+
+app.get("/update-images", (req, res) => {
+
+  exec("git pull", { cwd: "/app" }, (error, stdout, stderr) => {
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        error: error.message
+      })
+    }
+
+    res.json({
+      ok: true,
+      output: stdout
+    })
+
+  })
+
+})
+
+/* ============================= */
 /* SERVER                        */
 /* ============================= */
 
@@ -198,8 +245,16 @@ app.listen(PORT, async () => {
 
   console.log("Servidor iniciado en puerto", PORT)
 
-  console.log("Generando catalogo inicial...")
+  if (!cacheCatalogo.productos.length) {
 
-  await generarCatalogo()
+    console.log("Generando catalogo inicial...")
+
+    await generarCatalogo()
+
+  } else {
+
+    console.log("Catalogo cargado desde cache")
+
+  }
 
 })
