@@ -3,7 +3,6 @@ const axios = require("axios")
 const cors = require("cors")
 const path = require("path")
 const fs = require("fs")
-const { exec } = require("child_process")
 
 const app = express()
 
@@ -115,19 +114,7 @@ async function generarCatalogo() {
     }
 
     console.log("Productos cargados:", products.length)
-let productTypes = []
 
-const resTypes = await axios.get(
-  `https://api.bsale.io/v1/product_types.json`,
-  {
-    headers: { access_token: BSALE_TOKEN }
-  }
-)
-
-productTypes = resTypes.data.items
-
-const mapTypes = {}
-productTypes.forEach(t => mapTypes[t.id] = t.name)
 
     const mapVariants = {}
     variants.forEach(v => mapVariants[v.id] = v)
@@ -157,14 +144,14 @@ productTypes.forEach(t => mapTypes[t.id] = t.name)
       }
 
       catalogo.push({
-  productId: product.id,
-  name: product.name,
-  variant: variant.description,
-  barcode: barcode,
-  stock: stock.quantityAvailable,
-  category: mapTypes[product.product_type] || "Otros",
-  image: imagen
-})
+        productId: product.id,
+        name: product.name,
+        variant: variant.description,
+        barcode: barcode,
+        stock: stock.quantityAvailable,
+        category: product.product_type?.name || "Otros",
+        image: imagen
+      })
 
     })
 
@@ -221,34 +208,23 @@ app.get("/status", (req, res) => {
 })
 
 /* ============================= */
-/* ACTUALIZAR IMAGENES GITHUB    */
+/* ACTUALIZAR CATALOGO MANUAL    */
 /* ============================= */
 
-app.get("/update-images", (req, res) => {
+app.get("/update-catalogo", async (req, res) => {
 
   if (req.query.key !== "Quillotana123") {
     return res.status(403).send("No autorizado")
   }
 
-  exec("git pull", { cwd: "/app" }, (error, stdout, stderr) => {
+  console.log("Actualización manual del catálogo")
 
-    if (error) {
+  await generarCatalogo()
 
-      console.log("Error actualizando imágenes:", error)
-
-      return res.status(500).json({
-        ok: false,
-        error: error.message
-      })
-    }
-
-    console.log("Imágenes actualizadas desde GitHub")
-
-    res.json({
-      ok: true,
-      output: stdout
-    })
-
+  res.json({
+    ok: true,
+    total: cacheCatalogo.productos.length,
+    ultimaActualizacion: cacheCatalogo.ultimaActualizacion
   })
 
 })
@@ -278,7 +254,7 @@ app.listen(PORT, async () => {
 })
 
 /* ============================= */
-/* ACTUALIZAR CATALOGO AUTOMATICO */
+/* ACTUALIZACION AUTOMATICA      */
 /* ============================= */
 
 setInterval(async () => {
