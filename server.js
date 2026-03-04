@@ -15,7 +15,7 @@ app.use("/images", express.static(path.join(__dirname, "public")))
 
 const BSALE_TOKEN = process.env.BSALE_TOKEN
 const OFFICE_ID = 1
-const CACHE_FILE = "/app/catalogo.json"
+const CACHE_FILE = "/data/catalogo.json"
 
 let cacheCatalogo = {
   generando: false,
