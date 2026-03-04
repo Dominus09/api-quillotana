@@ -121,6 +121,14 @@ async function generarCatalogo() {
 
       const barcode = variant.barCode || variant.code
 
+      /* IMAGEN CON PLACEHOLDER AUTOMATICO */
+
+      let imagen = "https://api.quillotana.cl/images/placeholder.webp"
+
+      if (barcode) {
+        imagen = `https://api.quillotana.cl/images/${barcode}.webp`
+      }
+
       catalogo.push({
         productId: product.id,
         name: product.name,
@@ -128,7 +136,7 @@ async function generarCatalogo() {
         barcode: barcode,
         stock: stock.quantityAvailable,
         category: "",
-        image: `https://api.quillotana.cl/images/${barcode}.webp`
+        image: imagen
       })
 
     })
