@@ -65,77 +65,87 @@ async function generarCatalogo() {
 
   cacheCatalogo.generando = true
 
-  console.log("Generando catálogo...")
+  console.log("Generando catálogo optimizado...")
 
   try {
 
     const limit = 50
 
     /* ============================= */
-    /* STOCKS                        */
+    /* STOCKS (paralelo)             */
     /* ============================= */
 
     let stocks = []
     let offset = 0
+    let total = 1
 
-    while (true) {
+    while (offset < total) {
 
-      const res = await axios.get(
-        `https://api.bsale.io/v1/stocks.json?limit=${limit}&offset=${offset}`,
-        { headers: { access_token: BSALE_TOKEN } }
-      )
+      const requests = []
 
-      if (!res.data.items.length) break
+      for (let i = 0; i < 5; i++) {
 
-      stocks = stocks.concat(res.data.items)
-      offset += limit
+        requests.push(
+          axios.get(
+            `https://api.bsale.io/v1/stocks.json?limit=${limit}&offset=${offset}`,
+            { headers: { access_token: BSALE_TOKEN } }
+          )
+        )
+
+        offset += limit
+      }
+
+      const responses = await Promise.all(requests)
+
+      responses.forEach(r => {
+
+        stocks = stocks.concat(r.data.items)
+
+        if (r.data.total) total = r.data.total
+
+      })
+
     }
 
     console.log("Stocks:", stocks.length)
 
     /* ============================= */
-    /* VARIANTS                      */
+    /* VARIANTS (paralelo)           */
     /* ============================= */
 
-    offset = 0
     let variants = []
-
-    while (true) {
-
-      const res = await axios.get(
-        `https://api.bsale.io/v1/variants.json?limit=${limit}&offset=${offset}`,
-        { headers: { access_token: BSALE_TOKEN } }
-      )
-
-      if (!res.data.items.length) break
-
-      variants = variants.concat(res.data.items)
-      offset += limit
-    }
-
-    console.log("Variantes:", variants.length)
-
-    /* ============================= */
-    /* PRODUCTS                      */
-    /* ============================= */
-
     offset = 0
-    let products = []
+    total = 1
 
-    while (true) {
+    while (offset < total) {
 
-      const res = await axios.get(
-        `https://api.bsale.io/v1/products.json?limit=${limit}&offset=${offset}`,
-        { headers: { access_token: BSALE_TOKEN } }
-      )
+      const requests = []
 
-      if (!res.data.items.length) break
+      for (let i = 0; i < 5; i++) {
 
-      products = products.concat(res.data.items)
-      offset += limit
+        requests.push(
+          axios.get(
+            `https://api.bsale.io/v1/variants.json?limit=${limit}&offset=${offset}`,
+            { headers: { access_token: BSALE_TOKEN } }
+          )
+        )
+
+        offset += limit
+      }
+
+      const responses = await Promise.all(requests)
+
+      responses.forEach(r => {
+
+        variants = variants.concat(r.data.items)
+
+        if (r.data.total) total = r.data.total
+
+      })
+
     }
 
-    console.log("Productos:", products.length)
+    console.log("Variants:", variants.length)
 
     /* ============================= */
     /* PRODUCT TYPES                 */
@@ -152,14 +162,11 @@ async function generarCatalogo() {
     })
 
     /* ============================= */
-    /* MAPAS                         */
+    /* MAPA VARIANTS                 */
     /* ============================= */
 
     const mapVariants = {}
     variants.forEach(v => mapVariants[v.id] = v)
-
-    const mapProducts = {}
-    products.forEach(p => mapProducts[p.id] = p)
 
     /* ============================= */
     /* GENERAR CATALOGO              */
@@ -175,12 +182,9 @@ async function generarCatalogo() {
       const variant = mapVariants[stock.variant.id]
       if (!variant) return
 
-      const product = mapProducts[variant.product.id]
-      if (!product) return
-
       const barcode = variant.barCode || variant.code
 
-      const categoria = tipos[product.productTypeId] || "Otros"
+      const categoria = tipos[variant.productTypeId] || "Otros"
 
       const imagePath = `/app/public/${barcode}.webp`
 
@@ -189,8 +193,8 @@ async function generarCatalogo() {
         : `https://api.quillotana.cl/images/placeholder2.webp`
 
       catalogo.push({
-        productId: product.id,
-        name: product.name,
+        productId: variant.productId,
+        name: variant.name,
         variant: variant.description,
         barcode: barcode,
         stock: stock.quantityAvailable,
