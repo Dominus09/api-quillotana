@@ -61,7 +61,6 @@ async function generarCatalogo(){
  }
 
  generando = true
-
  console.log("Generando catálogo...")
 
  const inicio = Date.now()
@@ -70,7 +69,9 @@ async function generarCatalogo(){
 
   const limit = 50
 
-  /* STOCKS */
+  /* ========================= */
+  /* STOCKS                    */
+  /* ========================= */
 
   let stocks = []
   let offset = 0
@@ -94,7 +95,9 @@ async function generarCatalogo(){
 
   console.log("Stocks:",stocks.length)
 
-  /* VARIANTS */
+  /* ========================= */
+  /* VARIANTS                  */
+  /* ========================= */
 
   let variants = []
   offset = 0
@@ -118,7 +121,9 @@ async function generarCatalogo(){
 
   console.log("Variants:",variants.length)
 
-  /* PRODUCT TYPES */
+  /* ========================= */
+  /* PRODUCT TYPES             */
+  /* ========================= */
 
   const resTypes = await axiosSafe(
    "https://api.bsale.io/v1/product_types.json"
@@ -230,7 +235,7 @@ app.get("/update-catalogo",(req,res)=>{
 
 })
 
-/* RESET TOTAL */
+/* RESET SISTEMA */
 
 app.get("/reset",(req,res)=>{
 
@@ -243,7 +248,7 @@ app.get("/reset",(req,res)=>{
 })
 
 /* ========================= */
-/* AUTO UPDATE 30 MIN        */
+/* AUTO UPDATE               */
 /* ========================= */
 
 setInterval(()=>{
