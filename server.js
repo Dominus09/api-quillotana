@@ -3,6 +3,7 @@ const axios = require("axios")
 const cors = require("cors")
 const path = require("path")
 const fs = require("fs")
+const { exec } = require("child_process")
 
 const app = express()
 
@@ -15,6 +16,11 @@ app.use("/images", express.static(path.join(__dirname, "public")))
 const BSALE_TOKEN = process.env.BSALE_TOKEN
 const OFFICE_ID = 1
 const CACHE_FILE = "/data/catalogo.json"
+const API_KEY = "Quillotana123"
+
+/* ============================= */
+/* CACHE                         */
+/* ============================= */
 
 let cacheCatalogo = {
   generando: false,
@@ -22,17 +28,30 @@ let cacheCatalogo = {
   productos: []
 }
 
-/* ============================= */
-/* CARGAR CACHE SI EXISTE        */
-/* ============================= */
+function horaChile() {
+  return new Date().toLocaleString("es-CL", {
+    timeZone: "America/Santiago"
+  })
+}
+
+/* cargar cache si existe */
 
 if (fs.existsSync(CACHE_FILE)) {
 
   console.log("Cargando catálogo desde cache")
 
-  const data = fs.readFileSync(CACHE_FILE)
+  try {
 
-  cacheCatalogo = JSON.parse(data)
+    const data = fs.readFileSync(CACHE_FILE)
+    cacheCatalogo = JSON.parse(data)
+
+    console.log("Catalogo cargado desde cache")
+
+  } catch (err) {
+
+    console.log("Error leyendo cache")
+
+  }
 
 }
 
@@ -46,9 +65,15 @@ async function generarCatalogo() {
 
   cacheCatalogo.generando = true
 
+  console.log("Generando catálogo...")
+
   try {
 
     const limit = 50
+
+    /* ============================= */
+    /* STOCKS                        */
+    /* ============================= */
 
     let stocks = []
     let offset = 0
@@ -57,20 +82,20 @@ async function generarCatalogo() {
 
       const res = await axios.get(
         `https://api.bsale.io/v1/stocks.json?limit=${limit}&offset=${offset}`,
-        {
-          headers: { access_token: BSALE_TOKEN }
-        }
+        { headers: { access_token: BSALE_TOKEN } }
       )
 
       if (!res.data.items.length) break
 
       stocks = stocks.concat(res.data.items)
-
       offset += limit
     }
 
-    console.log("Stocks cargados:", stocks.length)
+    console.log("Stocks:", stocks.length)
 
+    /* ============================= */
+    /* VARIANTS                      */
+    /* ============================= */
 
     offset = 0
     let variants = []
@@ -79,20 +104,20 @@ async function generarCatalogo() {
 
       const res = await axios.get(
         `https://api.bsale.io/v1/variants.json?limit=${limit}&offset=${offset}`,
-        {
-          headers: { access_token: BSALE_TOKEN }
-        }
+        { headers: { access_token: BSALE_TOKEN } }
       )
 
       if (!res.data.items.length) break
 
       variants = variants.concat(res.data.items)
-
       offset += limit
     }
 
-    console.log("Variantes cargadas:", variants.length)
+    console.log("Variantes:", variants.length)
 
+    /* ============================= */
+    /* PRODUCTS                      */
+    /* ============================= */
 
     offset = 0
     let products = []
@@ -101,26 +126,44 @@ async function generarCatalogo() {
 
       const res = await axios.get(
         `https://api.bsale.io/v1/products.json?limit=${limit}&offset=${offset}`,
-        {
-          headers: { access_token: BSALE_TOKEN }
-        }
+        { headers: { access_token: BSALE_TOKEN } }
       )
 
       if (!res.data.items.length) break
 
       products = products.concat(res.data.items)
-
       offset += limit
     }
 
-    console.log("Productos cargados:", products.length)
+    console.log("Productos:", products.length)
 
+    /* ============================= */
+    /* PRODUCT TYPES                 */
+    /* ============================= */
+
+    const resTypes = await axios.get(
+      "https://api.bsale.io/v1/product_types.json",
+      { headers: { access_token: BSALE_TOKEN } }
+    )
+
+    const tipos = {}
+    resTypes.data.items.forEach(t => {
+      tipos[t.id] = t.name
+    })
+
+    /* ============================= */
+    /* MAPAS                         */
+    /* ============================= */
 
     const mapVariants = {}
     variants.forEach(v => mapVariants[v.id] = v)
 
     const mapProducts = {}
     products.forEach(p => mapProducts[p.id] = p)
+
+    /* ============================= */
+    /* GENERAR CATALOGO              */
+    /* ============================= */
 
     const catalogo = []
 
@@ -137,11 +180,13 @@ async function generarCatalogo() {
 
       const barcode = variant.barCode || variant.code
 
-      let imagen = "https://api.quillotana.cl/images/placeholder2.webp"
+      const categoria = tipos[product.productTypeId] || "Otros"
 
-      if (barcode) {
-        imagen = `https://api.quillotana.cl/images/${barcode}.webp`
-      }
+      const imagePath = `/app/public/${barcode}.webp`
+
+      const imageUrl = fs.existsSync(imagePath)
+        ? `https://api.quillotana.cl/images/${barcode}.webp`
+        : `https://api.quillotana.cl/images/placeholder2.webp`
 
       catalogo.push({
         productId: product.id,
@@ -149,25 +194,22 @@ async function generarCatalogo() {
         variant: variant.description,
         barcode: barcode,
         stock: stock.quantityAvailable,
-        category: product.product_type?.name || "Otros",
-        image: imagen
+        category: categoria,
+        image: imageUrl
       })
 
     })
 
     cacheCatalogo.productos = catalogo
-    cacheCatalogo.ultimaActualizacion = new Date().toISOString()
+    cacheCatalogo.ultimaActualizacion = horaChile()
 
-    fs.writeFileSync(
-      CACHE_FILE,
-      JSON.stringify(cacheCatalogo, null, 2)
-    )
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(cacheCatalogo))
 
     console.log("Catalogo generado:", catalogo.length)
 
   } catch (err) {
 
-    console.log("Error catalogo:", err.message)
+    console.log("Error catálogo:", err.message)
 
   }
 
@@ -175,14 +217,51 @@ async function generarCatalogo() {
 }
 
 /* ============================= */
-/* ENDPOINT CATALOGO             */
+/* ACTUALIZAR IMAGENES MANUAL    */
 /* ============================= */
 
-app.get("/catalogo", async (req, res) => {
+app.get("/update-images", (req, res) => {
 
-  if (!cacheCatalogo.productos.length) {
-    await generarCatalogo()
-  }
+  if (req.query.key !== API_KEY)
+    return res.status(403).json({ error: "Unauthorized" })
+
+  exec(
+    "wget -r -np -nH --cut-dirs=3 -A .webp https://raw.githubusercontent.com/Dominus09/api-quillotana/main/public/ -P /app/public/",
+    (err) => {
+
+      if (err) {
+        console.log("Error descargando imágenes")
+        return res.json({ status: "error" })
+      }
+
+      res.json({ status: "imagenes actualizadas" })
+    }
+  )
+
+})
+
+/* ============================= */
+/* UPDATE CATALOGO               */
+/* ============================= */
+
+app.get("/update-catalogo", async (req, res) => {
+
+  if (req.query.key !== API_KEY)
+    return res.status(403).json({ error: "Unauthorized" })
+
+  generarCatalogo()
+
+  res.json({
+    status: "actualizando catalogo"
+  })
+
+})
+
+/* ============================= */
+/* CATALOGO                      */
+/* ============================= */
+
+app.get("/catalogo", (req, res) => {
 
   res.json({
     generando: cacheCatalogo.generando,
@@ -208,30 +287,16 @@ app.get("/status", (req, res) => {
 })
 
 /* ============================= */
-/* ACTUALIZAR CATALOGO MANUAL    */
+/* ACTUALIZACION AUTOMATICA      */
 /* ============================= */
 
-app.get("/update-catalogo", async (req, res) => {
+setInterval(() => {
 
-  if (req.query.key !== "Quillotana123") {
-    return res.status(403).send("No autorizado")
-  }
+  console.log("Actualización automática del catálogo")
 
-  console.log("Forzando regeneración completa del catálogo")
+  generarCatalogo()
 
-  cacheCatalogo.generando = false
-  cacheCatalogo.productos = []
-  cacheCatalogo.ultimaActualizacion = null
-
-  await generarCatalogo()
-
-  res.json({
-    ok: true,
-    total: cacheCatalogo.productos.length,
-    ultimaActualizacion: cacheCatalogo.ultimaActualizacion
-  })
-
-})
+}, 1800000)
 
 /* ============================= */
 /* SERVER                        */
@@ -245,26 +310,10 @@ app.listen(PORT, async () => {
 
   if (!cacheCatalogo.productos.length) {
 
-    console.log("Generando catalogo inicial...")
+    console.log("Generando catalogo inicial")
 
     await generarCatalogo()
-
-  } else {
-
-    console.log("Catalogo cargado desde cache")
 
   }
 
 })
-
-/* ============================= */
-/* ACTUALIZACION AUTOMATICA      */
-/* ============================= */
-
-setInterval(async () => {
-
-  console.log("Actualizando catálogo automático...")
-
-  await generarCatalogo()
-
-}, 30 * 60 * 1000)
