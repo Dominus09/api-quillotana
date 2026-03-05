@@ -10,7 +10,6 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-/* carpeta de imágenes */
 app.use("/images", express.static(path.join(__dirname, "public")))
 
 const BSALE_TOKEN = process.env.BSALE_TOKEN
@@ -18,15 +17,15 @@ const OFFICE_ID = 1
 const CACHE_FILE = "/data/catalogo.json"
 const API_KEY = "Quillotana123"
 
-/* ============================= */
-/* CACHE                         */
-/* ============================= */
-
 let cacheCatalogo = {
   generando: false,
   ultimaActualizacion: null,
   productos: []
 }
+
+/* ============================= */
+/* HORA CHILE                    */
+/* ============================= */
 
 function horaChile() {
   return new Date().toLocaleString("es-CL", {
@@ -34,7 +33,9 @@ function horaChile() {
   })
 }
 
-/* cargar cache si existe */
+/* ============================= */
+/* CARGAR CACHE                  */
+/* ============================= */
 
 if (fs.existsSync(CACHE_FILE)) {
 
@@ -56,12 +57,15 @@ if (fs.existsSync(CACHE_FILE)) {
 }
 
 /* ============================= */
-/* GENERAR CATALOGO              */
+/* GENERAR CATALOGO OPTIMIZADO   */
 /* ============================= */
 
 async function generarCatalogo() {
 
-  if (cacheCatalogo.generando) return
+  if (cacheCatalogo.generando) {
+    console.log("Catálogo ya se está generando")
+    return
+  }
 
   cacheCatalogo.generando = true
 
@@ -107,7 +111,7 @@ async function generarCatalogo() {
 
     }
 
-    console.log("Stocks:", stocks.length)
+    console.log("Stocks cargados:", stocks.length)
 
     /* ============================= */
     /* VARIANTS (paralelo)           */
@@ -145,7 +149,7 @@ async function generarCatalogo() {
 
     }
 
-    console.log("Variants:", variants.length)
+    console.log("Variants cargados:", variants.length)
 
     /* ============================= */
     /* PRODUCT TYPES                 */
@@ -157,6 +161,7 @@ async function generarCatalogo() {
     )
 
     const tipos = {}
+
     resTypes.data.items.forEach(t => {
       tipos[t.id] = t.name
     })
@@ -218,16 +223,38 @@ async function generarCatalogo() {
   }
 
   cacheCatalogo.generando = false
+
 }
 
 /* ============================= */
-/* ACTUALIZAR IMAGENES MANUAL    */
+/* UPDATE CATALOGO MANUAL        */
+/* ============================= */
+
+app.get("/update-catalogo", async (req, res) => {
+
+  if (req.query.key !== API_KEY)
+    return res.status(403).json({ error: "Unauthorized" })
+
+  console.log("Actualización manual del catálogo")
+
+  generarCatalogo()
+
+  res.json({
+    status: "actualizando catalogo"
+  })
+
+})
+
+/* ============================= */
+/* UPDATE IMAGES MANUAL          */
 /* ============================= */
 
 app.get("/update-images", (req, res) => {
 
   if (req.query.key !== API_KEY)
     return res.status(403).json({ error: "Unauthorized" })
+
+  console.log("Actualizando imágenes desde GitHub")
 
   exec(
     "wget -r -np -nH --cut-dirs=3 -A .webp https://raw.githubusercontent.com/Dominus09/api-quillotana/main/public/ -P /app/public/",
@@ -245,24 +272,7 @@ app.get("/update-images", (req, res) => {
 })
 
 /* ============================= */
-/* UPDATE CATALOGO               */
-/* ============================= */
-
-app.get("/update-catalogo", async (req, res) => {
-
-  if (req.query.key !== API_KEY)
-    return res.status(403).json({ error: "Unauthorized" })
-
-  generarCatalogo()
-
-  res.json({
-    status: "actualizando catalogo"
-  })
-
-})
-
-/* ============================= */
-/* CATALOGO                      */
+/* ENDPOINT CATALOGO             */
 /* ============================= */
 
 app.get("/catalogo", (req, res) => {
@@ -300,7 +310,7 @@ setInterval(() => {
 
   generarCatalogo()
 
-}, 1800000)
+}, 30 * 60 * 1000)
 
 /* ============================= */
 /* SERVER                        */
